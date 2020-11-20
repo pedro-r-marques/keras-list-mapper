@@ -1,3 +1,19 @@
+# Copyright 2020 Pedro R. Marques. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+""" Keras ListMapper unit tests.
+"""
 import unittest
 
 import tensorflow as tf
@@ -7,6 +23,8 @@ from .keras_list_mapper import ListMapper
 
 
 class ListMapperTest(unittest.TestCase):
+    """ ListMapper unittests.
+    """
     def test_1rt_arg(self):
         """ inner layer with 1 ragged tensor argument
         """
@@ -19,7 +37,7 @@ class ListMapperTest(unittest.TestCase):
         model = models.Sequential()
         model.add(layers.Input(shape=(None, 2), ragged=True))
         model.add(ListMapper(inner))
-        model.add(layers.Lambda(lambda x: tf.reduce_sum(x)))
+        model.add(layers.Lambda(tf.reduce_sum))
 
         model.compile(loss="mse")
 
@@ -38,7 +56,7 @@ class ListMapperTest(unittest.TestCase):
         model = models.Sequential()
         model.add(layers.Input(shape=(None, 2), ragged=True))
         model.add(ListMapper(inner))
-        model.add(layers.Lambda(lambda x: tf.reduce_sum(x)))
+        model.add(layers.Lambda(tf.reduce_sum))
 
         model.compile(loss="mse", run_eagerly=True)
 
@@ -65,7 +83,7 @@ class ListMapperTest(unittest.TestCase):
         in1 = layers.Input(shape=(None, 2), ragged=True)
         in2 = layers.Input(shape=(None, 3), ragged=True)
         mout = ListMapper(inner)([in1, in2])
-        out = layers.Lambda(lambda x: tf.reduce_sum(x))(mout)
+        out = layers.Lambda(tf.reduce_sum)(mout)
         model = models.Model([in1, in2], out)
 
         model.compile(loss="mse")
@@ -91,7 +109,7 @@ class ListMapperTest(unittest.TestCase):
         in1 = layers.Input(shape=(None, 2), ragged=True)
         in2 = layers.Input(shape=(None, 3), ragged=True)
         mout = ListMapper(inner)([in1, in2])
-        out = layers.Lambda(lambda x: tf.reduce_sum(x))(mout)
+        out = layers.Lambda(tf.reduce_sum)(mout)
         model = models.Model([in1, in2], out)
 
         model.compile(loss="mse")
@@ -118,7 +136,7 @@ class ListMapperTest(unittest.TestCase):
         model = models.Sequential()
         model.add(layers.Input(shape=(None, 3), ragged=True))
         model.add(ListMapper(inner, state_shape=tf.TensorShape(3,)))
-        model.add(layers.Lambda(lambda x: tf.reduce_sum(x)))
+        model.add(layers.Lambda(tf.reduce_sum))
 
         model.compile(loss="mse")
         y = tf.constant([[1.], [1.]])

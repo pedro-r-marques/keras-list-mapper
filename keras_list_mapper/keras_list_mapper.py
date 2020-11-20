@@ -1,4 +1,18 @@
-"""
+# Copyright 2020 Pedro R. Marques. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+""" Keras RaggedTensor ListMapper layer
 """
 from typing import Optional
 
@@ -8,15 +22,38 @@ from tensorflow.keras import backend as K
 
 
 class ListMapper(layers.Layer):
-    """ Apply a mapper function to ragged tensor (or list of tensors)
-        allowing for an optional state vector and/or reducer.
+    """Apply a mapper function to one or more RaggedTensor(s).
 
-        Expects one or more ragged tensors in the shape of:
-            [batch, (sequence), additional dimensions]
+    This layer applies a map operation over a RaggedTensor sequence
+    dimension. It calls the mapper operation for each sequence grouping
+    together the batch indicies for which the sequence is valid.
+
+    It supports an optional state vector which can be an input of the mapper
+    and updated at every step.
+
+    Arguments:
+      mapper: layer to call for each RaggedTensor sequence.
+      state_shape: TensorShape for state vector.
+
+    The mapper layer should accept as input shape the same shapes as this
+    layer with the exception that the sequence_len dimension of RaggedTensors
+    is removed. In addition, when a state_shape is specified, this layer
+    expect the mapper to accept as first input the state vector and return
+    the state also as the first output tensor.
+
+    Input shape:
+      Zero or more N-D Tensor(s) with shape:
+      `(batch_size, ...)`
+      One or more N-D RaggedTensor(s) with shape:
+      `(batch_size, (sequence_length), features...)`.
+
+    Output shape:
+      `(batch_size, (sequence_length), mapper_dims...).
+
     """
 
     def __init__(self, mapper: layers.Layer,
-                 state_shape: Optional[tf.TensorShape] = None):
+                 state_shape: Optional[tf.TensorShape] = None, **kwargs):
         super().__init__()
         self.mapper = mapper
         if state_shape is not None and \
@@ -61,7 +98,7 @@ class ListMapper(layers.Layer):
 
         if len(inner_inputs) == 1:
             inner_inputs = inner_inputs[0]
-        outputs = self.mapper(inner_inputs)
+        outputs = self.mapper(inner_inputs, *args, **kwargs)
         if not self._built_from_signature:
             if self.state_shape is not None:
                 outputs = outputs[1]
@@ -73,7 +110,7 @@ class ListMapper(layers.Layer):
         self._set_connectivity_metadata((inputs,) + args, kwargs, outputs)
         return outputs
 
-    def call(self, inputs, *args, **kwargs):
+    def call(self, inputs, *args, **kwargs):  # pylint: disable=unused-argument
         inputs_list = tf.nest.flatten(inputs)
 
         ragged_inputs = []
@@ -119,7 +156,7 @@ class ListMapper(layers.Layer):
             if len(inner_inputs) == 1:
                 inner_inputs = inner_inputs[0]
 
-            y = self.mapper(inner_inputs)
+            y = self.mapper(inner_inputs, *args, **kwargs)
             if self.state_shape is not None:
                 state, output = y
                 states = tf.tensor_scatter_nd_update(states, indices, state)
