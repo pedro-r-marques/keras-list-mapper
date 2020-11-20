@@ -106,7 +106,7 @@ class ListMapperTest(unittest.TestCase):
         c22 = tf.ragged.constant([[10., 20., 30.], [.40, 50., 60.]])
         rt2 = tf.ragged.stack([c21, c22])
 
-        in1 = layers.Input(shape=(None, 2), ragged=True)
+        in1 = layers.Input(shape=(2,))
         in2 = layers.Input(shape=(None, 3), ragged=True)
         mout = ListMapper(inner)([in1, in2])
         out = layers.Lambda(tf.reduce_sum)(mout)
