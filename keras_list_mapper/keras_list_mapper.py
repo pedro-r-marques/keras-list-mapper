@@ -79,8 +79,10 @@ class ListMapper(layers.Layer):
         count = 0
         for inp in inputs_list:
             # TODO(roque): remove _type_spec after v2.3
-            spec = getattr(inp, 'type_spec', inp._type_spec)
-            if not isinstance(spec, tf.RaggedTensorSpec):
+            spec = getattr(inp, 'type_spec', None)
+            if spec is None:
+                spec = getattr(inp, '_type_spec', None)
+            if spec is None or not isinstance(spec, tf.RaggedTensorSpec):
                 inner_inputs.append(inp)
                 continue
             count += 1
