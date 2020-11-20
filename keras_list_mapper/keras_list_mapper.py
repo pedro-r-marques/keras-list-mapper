@@ -62,7 +62,7 @@ class ListMapper(layers.Layer):
         self.state_shape = state_shape
         self._built_from_signature = False
         self._output_signature = None
-        self.mapper_supports_ragged_tensor = False
+        self.mapper_supports_ragged_inputs = False
 
     def __call__(self, inputs, *args, **kwargs):
         inputs_list = tf.nest.flatten(inputs)
@@ -107,6 +107,9 @@ class ListMapper(layers.Layer):
             # TODO(roque): remove _type_spec
             self._output_signature = getattr(
                 outputs, 'type_spec', tf.TensorSpec(outputs.shape))
+            if hasattr(self.mapper, '_supports_ragged_inputs'):
+                self.mapper_supports_ragged_inputs = \
+                    self.mapper._supports_ragged_inputs
             self._built_from_signature = True
 
         self._set_connectivity_metadata((inputs,) + args, kwargs, outputs)
@@ -148,7 +151,7 @@ class ListMapper(layers.Layer):
             for inp in inputs_list:
                 if isinstance(inp, tf.RaggedTensor):
                     x = tf.gather_nd(inp, col_indices)
-                    if not self.mapper_supports_ragged_tensor and isinstance(
+                    if not self.mapper_supports_ragged_inputs and isinstance(
                             x, tf.RaggedTensor):
                         x = x.to_tensor()
                 else:
