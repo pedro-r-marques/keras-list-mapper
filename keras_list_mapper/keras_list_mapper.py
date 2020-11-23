@@ -112,6 +112,7 @@ class ListMapper(layers.Layer):
                     self.mapper._supports_ragged_inputs
             self._built_from_signature = True
 
+        super().build(inputs)
         self._set_connectivity_metadata((inputs,) + args, kwargs, outputs)
         return outputs
 

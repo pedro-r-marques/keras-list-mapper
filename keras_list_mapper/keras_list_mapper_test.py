@@ -40,6 +40,7 @@ class ListMapperTest(unittest.TestCase):
         model.add(layers.Lambda(tf.reduce_sum))
 
         model.compile(loss="mse")
+        model.summary(print_fn=lambda x: None)
 
         y = tf.constant([[19.], [100.]])
         model.fit(x=rt, y=y, verbose=0)
