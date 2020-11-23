@@ -18,6 +18,7 @@ import unittest
 
 import tensorflow as tf
 from tensorflow.keras import layers, models
+from tensorflow.keras import backend as K
 
 from .keras_list_mapper import ListMapper
 
@@ -25,6 +26,7 @@ from .keras_list_mapper import ListMapper
 class ListMapperTest(unittest.TestCase):
     """ ListMapper unittests.
     """
+
     def test_1rt_arg(self):
         """ inner layer with 1 ragged tensor argument
         """
@@ -142,3 +144,38 @@ class ListMapperTest(unittest.TestCase):
         model.compile(loss="mse")
         y = tf.constant([[1.], [1.]])
         model.fit([rt1], y=y, verbose=0)
+
+    def test_training_flag(self):
+        """ ensure that the training flag is correctly propagated
+        """
+        class TestLayer(layers.Layer):
+            def call(self, inputs, **kwargs):
+                x = tf.ones_like(inputs)
+                y = tf.zeros_like(inputs)
+                return K.in_train_phase(
+                    x, y, training=kwargs.get('training', None))
+
+        model = models.Sequential()
+        model.add(layers.Input(shape=(None, 2), ragged=True))
+        model.add(ListMapper(TestLayer()))
+
+        def reduce_sum(x):
+            # input shape [batch, (sequence), 2]
+            # reduce to a sum of values per batch.
+            s = tf.ragged.map_flat_values(tf.reduce_sum, x, axis=[-1])
+            if isinstance(s, tf.RaggedTensor):
+                s = s.to_tensor()
+                return tf.reduce_sum(s, axis=-1)
+            return s
+        model.add(layers.Lambda(reduce_sum))
+
+        model.compile(loss="mae", run_eagerly=True)
+
+        rt1 = tf.ragged.constant([[1., 1.]])
+        rt2 = tf.ragged.constant([[1., 1.], [1., .1]])
+        # tf.ragged.stack requires axis=0 to preserve order
+        rt = tf.ragged.stack([rt1, rt2], axis=0)
+        y = tf.constant([[2.], [4.]])
+        history = model.fit(x=rt, y=y, verbose=0)
+        loss = history.history['loss'][-1]
+        self.assertEqual(loss, 0.0)
