@@ -169,7 +169,7 @@ class ListMapperTest(unittest.TestCase):
             return s
         model.add(layers.Lambda(reduce_sum))
 
-        model.compile(loss="mae", run_eagerly=True)
+        model.compile(loss="mae")
 
         rt1 = tf.ragged.constant([[1., 1.]])
         rt2 = tf.ragged.constant([[1., 1.], [1., .1]])
@@ -179,3 +179,36 @@ class ListMapperTest(unittest.TestCase):
         history = model.fit(x=rt, y=y, verbose=0)
         loss = history.history['loss'][-1]
         self.assertEqual(loss, 0.0)
+
+    def test_batch_inputs(self):
+        """ Test the batch_inputs parameter
+
+        Batch inputs are not processed on a per time step basis
+        """
+        class TestLayer(layers.Layer):
+            def call(self, inputs, *kwargs):
+                state, rt, vals = inputs
+                x = tf.reduce_sum(rt, axis=[-1])
+                x = tf.expand_dims(x, -1)
+                state = tf.math.add(state, vals)
+                y = tf.math.add(state, x)
+                return state, y
+
+        in_batch = layers.Input(shape=(None,), ragged=True)
+        in_ts = layers.Input(shape=(None, 2), ragged=True)
+        lm = ListMapper(TestLayer(), state_shape=(2,), batch_inputs=[0])
+        out = lm([in_batch, in_ts])
+
+        model = models.Model([in_batch, in_ts], out)
+        model.compile(loss="mae")
+
+        rt_batch = tf.ragged.constant([[1, 2, 0, 3], [0, 1, 2]])
+        rt_ts = tf.ragged.constant([
+            [[1, 2], [3, 4], [1, 0]],
+            [[1, 2]]
+        ])
+        y = model.predict([rt_batch, rt_ts])
+        self.assertEqual(y[0].numpy().tolist(), [
+            [7.0, 8.0], [10.0, 12.0], [11.0, 12.0]
+        ])
+        self.assertEqual(y[1].numpy().tolist(), [[4.0, 5.0]])
