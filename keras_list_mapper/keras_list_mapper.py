@@ -59,6 +59,7 @@ class ListMapper(layers.Layer):
     def __init__(self, mapper: layers.Layer,
                  state_shape: Optional[tf.TensorShape] = None,
                  batch_inputs: Optional[List[int]] = None,
+                 mapper_supports_ragged_inputs: Optional[bool] = None,
                  **kwargs):
         super().__init__()
         self.mapper = mapper
@@ -72,7 +73,11 @@ class ListMapper(layers.Layer):
             self.batch_inputs = set(batch_inputs)
         self._built_from_signature = False
         self._output_signature = None
-        self.mapper_supports_ragged_inputs = False
+        if mapper_supports_ragged_inputs is None:
+            ragged_in = getattr(self.mapper, '_supports_ragged_inputs', False)
+        else:
+            ragged_in = mapper_supports_ragged_inputs
+        self.mapper_supports_ragged_inputs = ragged_in
 
     def __call__(self, inputs, *args, **kwargs):
         inputs_list = tf.nest.flatten(inputs)
@@ -102,7 +107,9 @@ class ListMapper(layers.Layer):
                 nshape = tf.TensorShape(spec.shape[:1] + spec.shape[2:])
             else:
                 nshape = tf.TensorShape(spec._shape[:1] + spec._shape[2:])
-            pl = K.placeholder(shape=nshape, dtype=inp.dtype)
+            is_ragged = isinstance(inp, tf.RaggedTensor) and \
+                self.mapper_supports_ragged_inputs
+            pl = K.placeholder(shape=nshape, dtype=inp.dtype, ragged=is_ragged)
             inner_inputs.append(pl)
 
         if not count:
@@ -118,9 +125,6 @@ class ListMapper(layers.Layer):
             # TODO(roque): remove _type_spec
             self._output_signature = getattr(
                 outputs, 'type_spec', tf.TensorSpec(outputs.shape))
-            if hasattr(self.mapper, '_supports_ragged_inputs'):
-                self.mapper_supports_ragged_inputs = \
-                    self.mapper._supports_ragged_inputs
             self._built_from_signature = True
 
         super().build(inputs)

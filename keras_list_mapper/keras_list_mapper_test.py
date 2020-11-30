@@ -16,6 +16,7 @@
 """
 import unittest
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras import backend as K
@@ -148,7 +149,7 @@ class ListMapperTest(unittest.TestCase):
     def test_training_flag(self):
         """ ensure that the training flag is correctly propagated
         """
-        class TestLayer(layers.Layer):
+        class FakeLayer(layers.Layer):
             def call(self, inputs, **kwargs):
                 x = tf.ones_like(inputs)
                 y = tf.zeros_like(inputs)
@@ -157,7 +158,7 @@ class ListMapperTest(unittest.TestCase):
 
         model = models.Sequential()
         model.add(layers.Input(shape=(None, 2), ragged=True))
-        model.add(ListMapper(TestLayer()))
+        model.add(ListMapper(FakeLayer()))
 
         def reduce_sum(x):
             # input shape [batch, (sequence), 2]
@@ -187,10 +188,11 @@ class ListMapperTest(unittest.TestCase):
         """
         rt_shape = []
 
-        class TestLayer(layers.Layer):
+        class FakeLayer(layers.Layer):
             def call(self, inputs, *kwargs):
                 state, rt, vals = inputs
                 rt_shape.append(rt.shape)
+                assert isinstance(rt, tf.RaggedTensor)
                 x = tf.reduce_sum(rt, axis=[-1])
                 x = tf.expand_dims(x, -1)
                 state = tf.math.add(state, vals)
@@ -199,7 +201,7 @@ class ListMapperTest(unittest.TestCase):
 
         in_batch = layers.Input(shape=(None,), ragged=True)
         in_ts = layers.Input(shape=(None, 2), ragged=True)
-        lm = ListMapper(TestLayer(), state_shape=(2,), batch_inputs=[0])
+        lm = ListMapper(FakeLayer(), state_shape=(2,), batch_inputs=[0])
         out = lm([in_batch, in_ts])
 
         model = models.Model([in_batch, in_ts], out)
@@ -218,3 +220,27 @@ class ListMapperTest(unittest.TestCase):
             [7.0, 8.0], [10.0, 12.0], [11.0, 12.0]
         ])
         self.assertEqual(y[1].numpy().tolist(), [[4.0, 5.0]])
+
+    def test_ragged_placeholder(self):
+        class FakeLayer(layers.Layer):
+            def call(self, inputs, *kwargs):
+                state, vals = inputs
+                assert isinstance(vals, tf.RaggedTensor)
+                x = tf.reduce_sum(vals, axis=1)
+                if isinstance(x, tf.RaggedTensor):
+                    x = x.to_tensor()
+                state = tf.math.add(state, x)
+                return state, state
+
+        model = models.Sequential()
+        model.add(layers.Input(shape=(None, None, 4), ragged=True))
+        fake = FakeLayer()
+        model.add(
+            ListMapper(fake, state_shape=(4,),
+                       mapper_supports_ragged_inputs=True))
+        rt = tf.ragged.stack([
+            tf.ragged.constant(np.arange(24).reshape(2, 3, 4)),
+            tf.ragged.constant(np.arange(60).reshape(3, 5, 4)),
+        ])
+        model.compile()
+        model.predict(rt)
