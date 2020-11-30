@@ -87,12 +87,13 @@ class ListMapper(layers.Layer):
                 K.placeholder(shape=[None] + self.state_shape))
 
         count = 0
-        for inp in inputs_list:
+        for ix, inp in enumerate(inputs_list):
             # TODO(roque): remove _type_spec after v2.3
             spec = getattr(inp, 'type_spec', None)
             if spec is None:
                 spec = getattr(inp, '_type_spec', None)
-            if spec is None or not isinstance(spec, tf.RaggedTensorSpec):
+            if spec is None or not isinstance(spec, tf.RaggedTensorSpec) \
+                    or ix in self.batch_inputs:
                 inner_inputs.append(inp)
                 continue
             count += 1
