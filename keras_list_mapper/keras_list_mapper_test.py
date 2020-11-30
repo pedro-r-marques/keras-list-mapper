@@ -185,9 +185,12 @@ class ListMapperTest(unittest.TestCase):
 
         Batch inputs are not processed on a per time step basis
         """
+        rt_shape = []
+
         class TestLayer(layers.Layer):
             def call(self, inputs, *kwargs):
                 state, rt, vals = inputs
+                rt_shape.append(rt.shape)
                 x = tf.reduce_sum(rt, axis=[-1])
                 x = tf.expand_dims(x, -1)
                 state = tf.math.add(state, vals)
@@ -208,6 +211,9 @@ class ListMapperTest(unittest.TestCase):
             [[1, 2]]
         ])
         y = model.predict([rt_batch, rt_ts])
+
+        rank = {len(x) for x in rt_shape}
+        self.assertEqual(list(rank), [2])
         self.assertEqual(y[0].numpy().tolist(), [
             [7.0, 8.0], [10.0, 12.0], [11.0, 12.0]
         ])
