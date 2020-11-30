@@ -14,7 +14,7 @@
 # ==============================================================================
 """ Keras RaggedTensor ListMapper layer
 """
-from typing import Optional
+from typing import List, Optional
 
 import tensorflow as tf
 from tensorflow.keras import layers
@@ -34,6 +34,10 @@ class ListMapper(layers.Layer):
     Arguments:
       mapper: layer to call for each RaggedTensor sequence.
       state_shape: TensorShape for state vector.
+      batch_inputs: By default, ragged tensors passed to the mapper node
+        split by time_step dimension. This option overrides this behavior
+        allowing for a given input to be passed through unmodified for all
+        time-steps of the batch.
 
     The mapper layer should accept as input shape the same shapes as this
     layer with the exception that the sequence_len dimension of RaggedTensors
@@ -53,13 +57,19 @@ class ListMapper(layers.Layer):
     """
 
     def __init__(self, mapper: layers.Layer,
-                 state_shape: Optional[tf.TensorShape] = None, **kwargs):
+                 state_shape: Optional[tf.TensorShape] = None,
+                 batch_inputs: Optional[List[int]] = None,
+                 **kwargs):
         super().__init__()
         self.mapper = mapper
         if state_shape is not None and \
                 not isinstance(state_shape, tf.TensorShape):
             state_shape = tf.TensorShape(state_shape)
         self.state_shape = state_shape
+        if batch_inputs is None:
+            self.batch_inputs = set()
+        else:
+            self.batch_inputs = set(batch_inputs)
         self._built_from_signature = False
         self._output_signature = None
         self.mapper_supports_ragged_inputs = False
@@ -119,12 +129,14 @@ class ListMapper(layers.Layer):
     def call(self, inputs, *args, **kwargs):  # pylint: disable=unused-argument
         inputs_list = tf.nest.flatten(inputs)
 
-        ragged_inputs = []
+        per_time_step_inputs = []
         for ix, inp in enumerate(inputs_list):
+            if ix in self.batch_inputs:
+                continue
             if isinstance(inp, tf.RaggedTensor):
-                ragged_inputs.append(ix)
+                per_time_step_inputs.append(ix)
 
-        rt = inputs_list[ragged_inputs[0]]
+        rt = inputs_list[per_time_step_inputs[0]]
 
         input_rt_shape = rt.bounding_shape()
 
@@ -149,8 +161,9 @@ class ListMapper(layers.Layer):
                 state = tf.gather_nd(states, indices)
                 inner_inputs.append(state)
 
-            for inp in inputs_list:
-                if isinstance(inp, tf.RaggedTensor):
+            for ix, inp in enumerate(inputs_list):
+                if ix not in self.batch_inputs and \
+                        isinstance(inp, tf.RaggedTensor):
                     x = tf.gather_nd(inp, col_indices)
                     if not self.mapper_supports_ragged_inputs and isinstance(
                             x, tf.RaggedTensor):
