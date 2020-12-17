@@ -14,6 +14,7 @@
 # ==============================================================================
 """ Keras ListMapper unit tests.
 """
+import tempfile
 import unittest
 
 import numpy as np
@@ -238,9 +239,33 @@ class ListMapperTest(unittest.TestCase):
         model.add(
             ListMapper(fake, state_shape=(4,),
                        mapper_supports_ragged_inputs=True))
+
+        model.compile()
+
         rt = tf.ragged.stack([
             tf.ragged.constant(np.arange(24).reshape(2, 3, 4)),
             tf.ragged.constant(np.arange(60).reshape(3, 5, 4)),
         ])
-        model.compile()
         model.predict(rt)
+
+    def test_save(self):
+        class FakeLayer(layers.Layer):
+            def call(self, inputs, *kwargs):
+                state, vals = inputs
+                assert isinstance(vals, tf.RaggedTensor)
+                x = tf.reduce_sum(vals, axis=1)
+                if isinstance(x, tf.RaggedTensor):
+                    x = x.to_tensor()
+                state = tf.math.add(state, x)
+                return state, state
+
+        model = models.Sequential()
+        model.add(layers.Input(shape=(None, None, 4), ragged=True))
+        fake = FakeLayer()
+        model.add(
+            ListMapper(fake, state_shape=(4,),
+                       mapper_supports_ragged_inputs=True))
+        model.compile(loss="mse")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model.save(tmpdir, save_traces=False)

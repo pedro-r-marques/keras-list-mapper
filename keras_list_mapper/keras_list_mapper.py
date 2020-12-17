@@ -20,6 +20,13 @@ import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.keras import backend as K
 
+from tensorflow.python.util.keras_deps import get_call_context_function
+
+
+def call_context():
+    fn = get_call_context_function()
+    return fn()
+
 
 class ListMapper(layers.Layer):
     """Apply a mapper function to one or more RaggedTensor(s).
@@ -81,9 +88,10 @@ class ListMapper(layers.Layer):
 
     def __call__(self, inputs, *args, **kwargs):
         inputs_list = tf.nest.flatten(inputs)
+
         in_functional_construction_mode = any(
             K.is_keras_tensor(t) for t in inputs_list)
-        if not in_functional_construction_mode:
+        if not (call_context().saving or in_functional_construction_mode):
             return super().__call__(inputs)
 
         inner_inputs = []
@@ -119,6 +127,17 @@ class ListMapper(layers.Layer):
         if len(inner_inputs) == 1:
             inner_inputs = inner_inputs[0]
         outputs = self.mapper(inner_inputs, *args, **kwargs)
+
+        # tracing the function while saving the graph
+        if call_context().saving:
+            if self.state_shape is not None:
+                outputs = outputs[1:]
+            elif not isinstance(outputs, (list, tuple)):
+                outputs = [outputs]
+            outputs = [x._to_placeholder() if K.is_keras_tensor(x) else x
+                       for x in outputs]
+            return outputs
+
         if not self._built_from_signature:
             if self.state_shape is not None:
                 outputs = outputs[1]
