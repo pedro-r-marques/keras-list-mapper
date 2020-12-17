@@ -107,8 +107,8 @@ class ListMapper(layers.Layer):
                 nshape = tf.TensorShape(spec.shape[:1] + spec.shape[2:])
             else:
                 nshape = tf.TensorShape(spec._shape[:1] + spec._shape[2:])
-            is_ragged = isinstance(inp, tf.RaggedTensor) and \
-                self.mapper_supports_ragged_inputs
+            assert isinstance(spec, tf.RaggedTensorSpec)
+            is_ragged = self.mapper_supports_ragged_inputs
             pl = K.placeholder(shape=nshape, dtype=inp.dtype, ragged=is_ragged)
             inner_inputs.append(pl)
 
