@@ -14,13 +14,14 @@
 # ==============================================================================
 """ Keras ListMapper unit tests.
 """
+import itertools
 import tempfile
 import unittest
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers, models
 from tensorflow.keras import backend as K
+from tensorflow.keras import layers, models
 
 from .keras_list_mapper import ListMapper
 
@@ -269,3 +270,43 @@ class ListMapperTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model.save(tmpdir, save_traces=False)
+
+    def test_save_to_json(self):
+        """ Test that ListMapper correctly serializes to JSON """
+
+        class FakeLayer(layers.Layer):
+            def call(self, inputs, *kwargs):
+                state, vals = inputs
+                assert isinstance(vals, tf.RaggedTensor)
+                x = tf.reduce_sum(vals, axis=1)
+                if isinstance(x, tf.RaggedTensor):
+                    x = x.to_tensor()
+                state = tf.math.add(state, x)
+                return state, state
+
+        model = models.Sequential()
+        model.add(layers.Input(shape=(None, None, 4), ragged=True))
+        fake = FakeLayer(name="fake_layer")
+        model.add(
+            ListMapper(fake, state_shape=(4,),
+                       mapper_supports_ragged_inputs=True,
+                       name="list_mapper"))
+        model.compile(loss="mse")
+
+        model_json = model.to_json()
+        from_json_model = models.model_from_json(
+            model_json,
+            custom_objects={"ListMapper": ListMapper, "FakeLayer": FakeLayer})
+
+        # Test same structure
+        for layer, new_layer in itertools.zip_longest(model.layers,
+                                                      from_json_model.layers):
+            self.assertEqual(layer.get_config(), new_layer.get_config())
+
+        # Test same output
+        rt = tf.ragged.stack([
+            tf.ragged.constant(np.arange(24).reshape(2, 3, 4)),
+            tf.ragged.constant(np.arange(60).reshape(3, 5, 4)),
+        ])
+        tf.assert_equal(model.predict(rt).to_tensor(),
+                        from_json_model.predict(rt).to_tensor())
