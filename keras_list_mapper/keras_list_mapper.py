@@ -14,12 +14,11 @@
 # ==============================================================================
 """ Keras RaggedTensor ListMapper layer
 """
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import tensorflow as tf
-from tensorflow.keras import layers
 from tensorflow.keras import backend as K
-
+from tensorflow.keras import layers
 from tensorflow.python.util.keras_deps import get_call_context_function
 
 
@@ -28,7 +27,7 @@ def call_context():
     return fn()
 
 
-class ListMapper(layers.Layer):
+class ListMapper(layers.Wrapper):
     """Apply a mapper function to one or more RaggedTensor(s).
 
     This layer applies a map operation over a RaggedTensor sequence
@@ -39,7 +38,7 @@ class ListMapper(layers.Layer):
     and updated at every step.
 
     Arguments:
-      mapper: layer to call for each RaggedTensor sequence.
+      layer: mapper layer to call for each RaggedTensor sequence.
       state_shape: TensorShape for state vector.
       batch_inputs: By default, ragged tensors passed to the mapper node
         split by time_step dimension. This option overrides this behavior
@@ -63,13 +62,12 @@ class ListMapper(layers.Layer):
 
     """
 
-    def __init__(self, mapper: layers.Layer,
+    def __init__(self, layer: layers.Layer,
                  state_shape: Optional[tf.TensorShape] = None,
                  batch_inputs: Optional[List[int]] = None,
                  mapper_supports_ragged_inputs: Optional[bool] = None,
                  **kwargs):
-        super().__init__()
-        self.mapper = mapper
+        super().__init__(layer, **kwargs)
         if state_shape is not None and \
                 not isinstance(state_shape, tf.TensorShape):
             state_shape = tf.TensorShape(state_shape)
@@ -81,10 +79,24 @@ class ListMapper(layers.Layer):
         self._built_from_signature = False
         self._output_signature = None
         if mapper_supports_ragged_inputs is None:
-            ragged_in = getattr(self.mapper, '_supports_ragged_inputs', False)
+            ragged_in = getattr(self.layer, '_supports_ragged_inputs', False)
         else:
             ragged_in = mapper_supports_ragged_inputs
         self.mapper_supports_ragged_inputs = ragged_in
+
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update({
+            "state_shape": self.state_shape,
+            "batch_inputs": list(self.batch_inputs),
+            "mapper_supports_ragged_inputs": self.mapper_supports_ragged_inputs
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any], custom_objects=None):
+        config["batch_inputs"] = set(config["batch_inputs"])
+        return super().from_config(config, custom_objects)
 
     def __call__(self, inputs, *args, **kwargs):
         inputs_list = tf.nest.flatten(inputs)
@@ -126,7 +138,7 @@ class ListMapper(layers.Layer):
 
         if len(inner_inputs) == 1:
             inner_inputs = inner_inputs[0]
-        outputs = self.mapper(inner_inputs, *args, **kwargs)
+        outputs = self.layer(inner_inputs, *args, **kwargs)
 
         # tracing the function while saving the graph
         if call_context().saving:
@@ -199,7 +211,7 @@ class ListMapper(layers.Layer):
             if len(inner_inputs) == 1:
                 inner_inputs = inner_inputs[0]
 
-            y = self.mapper(inner_inputs, *args, **kwargs)
+            y = self.layer(inner_inputs, *args, **kwargs)
             if self.state_shape is not None:
                 state, output = y
                 states = tf.tensor_scatter_nd_update(states, indices, state)
