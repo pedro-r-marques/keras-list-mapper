@@ -16,6 +16,10 @@ jobs:
     strategy:
       matrix:
         python-version: [3.7, 3.8]
+        tensorflow-version: [2.4.1, 2.5.0]
+        include:
+          - python-version: 3.9
+            tensorflow-version: 2.5.0
 
     steps:
     - uses: actions/checkout@v2
@@ -25,9 +29,9 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        python -m pip install --upgrade pip setuptools wheel
+        pip install flake8 pytest pytest-isort
+        if [ -f requirements.txt ]; then pip install -r requirements.txt tensorflow==${{ matrix.tensorflow-version }}; fi
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
@@ -36,7 +40,7 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest
+        pytest --isort
     - name: Install
       run: |
         python -m setup install
