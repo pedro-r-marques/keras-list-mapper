@@ -102,6 +102,9 @@ class ListMapper(layers.Wrapper):
         return super().from_config(config, custom_objects)
 
     def __call__(self, inputs, *args, **kwargs):
+        # Build layer and inner layer
+        self.build(nest.map_structure(lambda x: x.shape, inputs))
+
         inputs_list = tf.nest.flatten(inputs)
 
         in_functional_construction_mode = any(
@@ -109,51 +112,14 @@ class ListMapper(layers.Wrapper):
         if not (call_context().saving or in_functional_construction_mode):
             return super().__call__(inputs)
 
-        inner_inputs = []
-        if self.state_shape is not None:
-            inner_inputs.append(
-                K.placeholder(shape=[None] + self.state_shape))
-
-        has_ragged = False
-        input_shape = nest.map_structure(
-            lambda x: tf.TensorShape(K.int_shape(x)), inputs)
-        batch_inputs = nest.flatten(self._batch_inputs(input_shape))
-        for batch_input, inp in zip(batch_inputs, inputs_list):
-            if batch_input:
-                inner_inputs.append(inp)
-                continue
-            has_ragged = True
-            nshape = tf.TensorShape(inp.shape[:1] + inp.shape[2:])
-            assert isinstance(inp.type_spec, tf.RaggedTensorSpec)
-            is_ragged = self.mapper_supports_ragged_inputs
-            pl = K.placeholder(shape=nshape, dtype=inp.dtype, ragged=is_ragged)
-            inner_inputs.append(pl)
-
-        if not has_ragged:
-            raise ValueError('ListMapper inputs has no RaggedTensor')
-
-        if len(inner_inputs) == 1:
-            inner_inputs = inner_inputs[0]
-        outputs = self.layer(inner_inputs, *args, **kwargs)
-
-        if self.state_shape is not None:
-            outputs = outputs[1:]
-            if len(outputs) == 1:
-                outputs = outputs[0]
+        input_spec = nest.map_structure(lambda x: x.type_spec, inputs)
+        output_spec = self.compute_output_signature(input_spec)
 
         if not self._built_from_signature:
-            self._output_signatures = nest.map_structure(
-                lambda x: x.type_spec, outputs
-            )
+            self._output_signatures = output_spec
             self._built_from_signature = True
 
-        # Build layer and inner layer
-        self.build(input_shape)
-        output_shapes = self.compute_output_shape(input_shape)
-
-        def replace_shape(tensor, shape: tf.TensorShape):
-            return K.placeholder(shape, dtype=tensor.dtype, ragged=True)
-        outputs = nest.map_structure(replace_shape, outputs, output_shapes)
+        outputs = nest.map_structure(self._placeholder_from_spec, output_spec)
 
         # tracing the function while saving the graph
         if call_context().saving:
@@ -162,10 +128,8 @@ class ListMapper(layers.Wrapper):
                 lambda x: x._to_placeholder() if K.is_keras_tensor(x) else x,
                 outputs)
 
-        # TODO(DavideWalder): Since id(outputs) != id(inputs), this is
-        # currently not doing anything
-        self._set_connectivity_metadata((inputs,) + args, kwargs, outputs)
-        return outputs
+        return self._set_connectivity_metadata(
+            (inputs,) + args, kwargs, outputs)
 
     def call(self, inputs, *args, **kwargs):  # pylint: disable=unused-argument
         inputs_list = tf.nest.flatten(inputs)
@@ -181,7 +145,7 @@ class ListMapper(layers.Wrapper):
 
         sz = rt.row_splits[-1]
         outputs = nest.map_structure(
-            lambda x: tf.zeros((sz,) + tuple(x.shape[1:]), dtype=x.dtype),
+            lambda x: tf.zeros((sz,) + tuple(x.shape[2:]), dtype=x.dtype),
             self._output_signatures)
 
         if self.state_shape is not None:
@@ -236,6 +200,14 @@ class ListMapper(layers.Wrapper):
             outputs)
 
     @staticmethod
+    def _placeholder_from_spec(
+            type_spec: Union[tf.TensorSpec, tf.RaggedTensorSpec]):
+        return K.placeholder(
+            shape=type_spec.shape,
+            dtype=type_spec.dtype,
+            ragged=isinstance(type_spec, tf.RaggedTensorSpec))
+
+    @staticmethod
     def _remove_timesteps(dims: tf.TensorShape, batch_input: bool
                           ) -> tf.TensorShape:
         if batch_input:
@@ -244,7 +216,7 @@ class ListMapper(layers.Wrapper):
         return tf.TensorShape((dims[0], *dims[2:]))
 
     def _batch_inputs(self, input_shapes) -> Union[bool, List[bool]]:
-        batch_inputs = 0 in self.batch_inputs
+        batch_inputs: Union[bool, List[bool]] = 0 in self.batch_inputs
         if nest.is_sequence(input_shapes):
             # Check if the input was declared as batch input or if the second
             # dim is not ragged.
@@ -279,3 +251,56 @@ class ListMapper(layers.Wrapper):
             return tf.TensorShape([dims[0], timesteps] + dims[1:])
 
         return nest.map_structure(insert_timesteps, child_output_shape)
+
+    def _create_input_spec(self,
+                           spec: Union[tf.TensorSpec, tf.RaggedTensorSpec],
+                           shape: tf.TensorShape
+                           ) -> Union[tf.TensorSpec, tf.RaggedTensorSpec]:
+        if self.mapper_supports_ragged_inputs:
+            return tf.RaggedTensorSpec(shape, spec.dtype)
+        return tf.TensorSpec(shape, spec.dtype)
+
+    def compute_output_signature(self, input_sig: tf.RaggedTensorSpec):
+        input_shape = nest.map_structure(lambda x: x.shape, input_sig)
+
+        batch_inputs = self._batch_inputs(input_shape)
+        child_input_shape = nest.map_structure(self._remove_timesteps,
+                                               input_shape,
+                                               batch_inputs)
+
+        child_input_sig = nest.map_structure(self._create_input_spec,
+                                             input_sig,
+                                             child_input_shape)
+        if self.state_shape is not None:
+            batch_size = nest.flatten(tf_utils.convert_shapes(input_shape))[0]
+            state_spec = tf.TensorSpec((batch_size, *self.state_shape),
+                                       tf.float32)
+            child_input_sig = [state_spec, *nest.flatten(child_input_sig)]
+
+        # NOTE(DavideWalder): For many layers, compute_output_signature doesn't
+        # give the expected result, therefore the layer is called with
+        # placeholders. Alternative:
+
+        # child_output_sig = self.layer.compute_output_signature(
+        #     child_input_sig)
+
+        placeholders = nest.map_structure(self._placeholder_from_spec,
+                                          child_input_sig)
+        child_output_sig = self.layer(placeholders)
+
+        if self.state_shape is not None:
+            child_output_sig = child_output_sig[1:]
+            if len(child_output_sig) == 1:
+                child_output_sig, = child_output_sig
+        timesteps = nest.flatten(tf_utils.convert_shapes(input_shape))[1]
+        row_splits_dtype = next(
+            inp for b_inp, inp in
+            zip(*map(nest.flatten, (batch_inputs, input_sig)))
+            if not b_inp).row_splits_dtype
+
+        def insert_timesteps(spec):
+            shape = spec.shape
+            return tf.RaggedTensorSpec([shape[0], timesteps] + shape[1:],
+                                       spec.dtype,
+                                       row_splits_dtype=row_splits_dtype)
+        return nest.map_structure(insert_timesteps, child_output_sig)

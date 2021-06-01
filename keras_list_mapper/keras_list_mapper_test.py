@@ -470,7 +470,7 @@ class ListMapperTest(unittest.TestCase):
                 self.assertEqual(out_rt.row_splits.dtype, rt1_dtype)
 
 
-class ComputeOutputShape(unittest.TestCase):
+class ComputeOutputShapeTest(unittest.TestCase):
     """ Test output shape inference. """
 
     def _runner(self, mapper: ListMapper, test_shapes: List[Tuple]):
@@ -509,7 +509,6 @@ class ComputeOutputShape(unittest.TestCase):
         self._runner(mapper, test_shapes)
 
     def test_multiple_input_with_state(self):
-        # Multiple input, with state
         test_shapes = [
             ([[None, None, 5], [None, None, 7, 11]], [None, None, 79]),
             # The second input will be used as time step input since it's not
@@ -529,7 +528,6 @@ class ComputeOutputShape(unittest.TestCase):
         self._runner(mapper, test_shapes)
 
     def test_multiple_input_multiple_output_with_state(self):
-        # Multiple input, with state
         test_shapes = [
             ([[None, None, 5], [None, None, 7, 11]],
              [[None, None, 79], [None, None]]),
@@ -560,3 +558,54 @@ class ComputeOutputShape(unittest.TestCase):
         # TODO(DavideWalder): Add full recursive usage support
         mapper = ListMapper(ListMapper(layers.Dense(3)))
         self._runner(mapper, test_shapes)
+
+
+class ComputeOutputSignatureTest(unittest.TestCase):
+    """ Test output signature inference
+
+    Test coverage of compute_output_signature is also provided by
+    ListMapperTest since it used in __call__.
+    """
+
+    def _runner(self, mapper: ListMapper, test_sigs: List[Tuple]):
+        for inp_sig, exp_sig in test_sigs:
+            with self.subTest(inp_shape=inp_sig, exp_shape=exp_sig):
+                out_sig = mapper.compute_output_signature(inp_sig)
+                self.assertEqual(exp_sig, out_sig)
+
+    def test_single_input_no_state(self):
+        test_specs = [
+            (tf.RaggedTensorSpec([None, None, 4], tf.float32, row_splits_dtype=tf.int32),  # noqa E501
+             tf.RaggedTensorSpec([None, None, 3], tf.int64, row_splits_dtype=tf.int32)),  # noqa E501
+
+            (tf.RaggedTensorSpec([5, 2, 4], tf.float32, row_splits_dtype=tf.int32),  # noqa E501
+             tf.RaggedTensorSpec([5, 2, 3], tf.int64, row_splits_dtype=tf.int32)),  # noqa E501
+        ]
+
+        inner_in = layers.Input(shape=(4,), dtype=tf.float32)
+        inner_dense = layers.Dense(3)
+        inner_cast = layers.Lambda(lambda x: tf.cast(x, tf.int64))
+        inner = tf.keras.Sequential([inner_in, inner_dense, inner_cast])
+        mapper = ListMapper(inner)
+        self._runner(mapper, test_specs)
+
+    def test_multiple_input_multiple_output_with_state(self):
+        test_specs = [
+            # Test that row_splits_dtype comes from the first input
+            ([tf.RaggedTensorSpec([None, None, 5], tf.float32, row_splits_dtype=tf.int64),  # noqa E501
+              tf.RaggedTensorSpec([None, None, 7, 11], tf.float32, row_splits_dtype=tf.int32)],  # noqa E501
+             [tf.RaggedTensorSpec([None, None, 79], tf.float32, row_splits_dtype=tf.int64),  # noqa E501
+              tf.RaggedTensorSpec([None, None], tf.float32, row_splits_dtype=tf.int64)]),  # noqa E501
+        ]
+
+        state_inp = layers.Input(shape=(2,))
+        inner_in0 = layers.Input(shape=(5,))
+        inner_in1 = layers.Input(shape=(7, 11))
+        inner_in1_f = layers.Flatten()(inner_in1)
+        inner_vec = layers.Concatenate()([state_inp, inner_in1_f])
+        inner_dense = layers.Reshape(tuple())(layers.Dense(1)(inner_vec))
+        inner = models.Model([state_inp, inner_in0, inner_in1],
+                             [state_inp, inner_vec, inner_dense])
+
+        mapper = ListMapper(inner, state_shape=(2,))
+        self._runner(mapper, test_specs)
